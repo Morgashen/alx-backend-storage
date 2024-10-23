@@ -1,49 +1,54 @@
-#!/usr/bin/python3
-import requests
+#!/usr/bin/env python3
+"""In this tasks, we will implement a get_page function
+(prototype: def get_page(url: str) -> str:). The core of
+the function is very simple. It uses the requests module
+to obtain the HTML content of a particular URL and returns it.
+
+Start in a new file named web.py and do not reuse the code
+written in exercise.py.
+
+Inside get_page track how many times a particular URL was
+accessed in the key "count:{url}" and cache the result with
+an expiration time of 10 seconds.
+
+Tip: Use http://slowwly.robertomurray.co.uk to simulate
+a slow response and test your caching."""
+
+
 import redis
+import requests
 from functools import wraps
-import time
 
-# Initialize Redis
-cache = redis.Redis(host='localhost', port=6379, db=0)
+r = redis.Redis()
 
-# Decorator for caching with expiration time and tracking count
-def cache_page(expire_time=10):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(url):
-            cache_key = f"content:{url}"
-            count_key = f"count:{url}"
-            
-            # Check if the page is cached
-            cached_content = cache.get(cache_key)
-            if cached_content:
-                print(f"Cache hit for {url}")
-                return cached_content.decode('utf-8')
-            
-            # Otherwise, fetch the page and cache it
-            print(f"Cache miss for {url}, fetching...")
-            result = func(url)
-            cache.setex(cache_key, expire_time, result)
-            
-            # Increment the count of access
-            cache.incr(count_key)
-            
-            return result
-        return wrapper
-    return decorator
 
-# The get_page function with caching and count tracking
-@cache_page(expire_time=10)
+def url_access_count(method):
+    """decorator for get_page function"""
+    @wraps(method)
+    def wrapper(url):
+        """wrapper function"""
+        key = "cached:" + url
+        cached_value = r.get(key)
+        if cached_value:
+            return cached_value.decode("utf-8")
+
+            # Get new content and update cache
+        key_count = "count:" + url
+        html_content = method(url)
+
+        r.incr(key_count)
+        r.set(key, html_content, ex=10)
+        r.expire(key, 10)
+        return html_content
+    return wrapper
+
+
+@url_access_count
 def get_page(url: str) -> str:
-    response = requests.get(url)
-    return response.text
+    """obtain the HTML content of a particular"""
+    results = requests.get(url)
+    return results.text
 
-# Test the function
+
 if __name__ == "__main__":
-    test_url = "http://slowwly.robertomurray.co.uk"
-    print(get_page(test_url))
-    time.sleep(5)
-    print(get_page(test_url))
-    time.sleep(12)
-    print(get_page(test_url))  # This should re-fetch as cache expires after 10 seconds
+    get_page('http://slowwly.robertomurray.co.uk')
