@@ -1,54 +1,97 @@
 #!/usr/bin/env python3
-"""In this tasks, we will implement a get_page function
-(prototype: def get_page(url: str) -> str:). The core of
-the function is very simple. It uses the requests module
-to obtain the HTML content of a particular URL and returns it.
-
-Start in a new file named web.py and do not reuse the code
-written in exercise.py.
-
-Inside get_page track how many times a particular URL was
-accessed in the key "count:{url}" and cache the result with
-an expiration time of 10 seconds.
-
-Tip: Use http://slowwly.robertomurray.co.uk to simulate
-a slow response and test your caching."""
-
+"""
+Module for fetching web pages with Redis caching and access counting.
+Implements caching of web pages with expiration and tracks access frequency.
+"""
 
 import redis
 import requests
-from functools import wraps
+import functools
+from typing import Callable
 
-r = redis.Redis()
 
-
-def url_access_count(method):
-    """decorator for get_page function"""
-    @wraps(method)
-    def wrapper(url):
-        """wrapper function"""
-        key = "cached:" + url
-        cached_value = r.get(key)
-        if cached_value:
-            return cached_value.decode("utf-8")
-
-            # Get new content and update cache
-        key_count = "count:" + url
-        html_content = method(url)
-
-        r.incr(key_count)
-        r.set(key, html_content, ex=10)
-        r.expire(key, 10)
-        return html_content
+def url_count(method: Callable) -> Callable:
+    """
+    Decorator to track the number of times a URL is accessed.
+    
+    Args:
+        method: The method to be decorated
+        
+    Returns:
+        Callable: The wrapped method that includes URL access counting
+    """
+    @functools.wraps(method)
+    def wrapper(url: str) -> str:
+        """
+        Wrapper function that increments the URL access counter and calls the method.
+        
+        Args:
+            url: The URL to fetch
+            
+        Returns:
+            str: The page content
+        """
+        redis_client = redis.Redis()
+        count_key = f"count:{url}"
+        redis_client.incr(count_key)
+        return method(url)
     return wrapper
 
 
-@url_access_count
+def cache_page(expiration: int = 10) -> Callable:
+    """
+    Decorator to cache the page content with expiration.
+    
+    Args:
+        expiration: Cache expiration time in seconds (default: 10)
+        
+    Returns:
+        Callable: The wrapped method that includes page content caching
+    """
+    def decorator(method: Callable) -> Callable:
+        @functools.wraps(method)
+        def wrapper(url: str) -> str:
+            """
+            Wrapper function that implements page caching and calls the method.
+            
+            Args:
+                url: The URL to fetch
+                
+            Returns:
+                str: The page content (from cache if available)
+            """
+            redis_client = redis.Redis()
+            cache_key = f"cache:{url}"
+            
+            # Try to get content from cache
+            cached_content = redis_client.get(cache_key)
+            if cached_content is not None:
+                return cached_content.decode('utf-8')
+            
+            # If not in cache, fetch and store
+            content = method(url)
+            redis_client.setex(cache_key, expiration, content)
+            return content
+        return wrapper
+    return decorator
+
+
+@url_count
+@cache_page(10)
 def get_page(url: str) -> str:
-    """obtain the HTML content of a particular"""
-    results = requests.get(url)
-    return results.text
-
-
-if __name__ == "__main__":
-    get_page('http://slowwly.robertomurray.co.uk')
+    """
+    Obtain the HTML content of a URL with caching and access counting.
+    
+    Args:
+        url: The URL to fetch
+        
+    Returns:
+        str: The HTML content of the page
+        
+    Note:
+        - Results are cached for 10 seconds
+        - Number of access attempts is tracked
+        - Uses Redis for caching and counting
+    """
+    response = requests.get(url)
+    return response.text
